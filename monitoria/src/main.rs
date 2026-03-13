@@ -5,7 +5,7 @@ use rust_xlsxwriter::{Workbook, Format, Color};
 use std::io::{self, Write, BufRead};
 use std::fs::{self, File};
 use std::path::Path;
-use std::process::Command; // Para abrir o editor
+use std::process::Command;
 use directories::UserDirs;
 
 #[derive(Parser)]
@@ -19,7 +19,7 @@ enum Comandos {
     #[command(visible_alias = "exp")] Exportar,
     #[command(visible_alias = "att")] Atualizar { id: i32 },
     #[command(visible_alias = "del")] Deletar { id: i32 },
-    #[command(visible_alias = "int")] Intervalos, // NOVO COMANDO
+    #[command(visible_alias = "int")] Intervalos,
 }
 
 struct Intervalo { inicio: u32, fim: u32 }
@@ -27,11 +27,20 @@ struct Intervalo { inicio: u32, fim: u32 }
 // ==========================================
 // GESTOR DE INTERVALOS
 // ==========================================
-fn carregar_intervalos() -> Vec<Intervalo> {
+fn carregar_intervalos(proativo: bool) -> Vec<Intervalo> {
     let caminho = "intervalos.txt";
     if !Path::new(caminho).exists() {
-        let _ = fs::write(caminho, "09:40-10:00\n16:10-16:30");
+        let _ = fs::write(caminho, "");
+        if proativo {
+            println!("\n🆕 Arquivo de intervalos criado!");
+            let resp = ler("Deseja configurar seus horários de descanso agora? (s/N): ").to_lowercase();
+            if resp == "s" {
+                let _ = Command::new("nano").arg(caminho).status();
+                println!("✅ Intervalos salvos!");
+            }
+        }
     }
+
     let file = File::open(caminho).unwrap();
     let mut lista = Vec::new();
     for linha in io::BufReader::new(file).lines().filter_map(|l| l.ok()) {
@@ -108,16 +117,14 @@ fn main() {
     match cli.comando {
         Comandos::Intervalos => {
             let caminho = "intervalos.txt";
-            if !Path::new(caminho).exists() { let _ = fs::write(caminho, "09:40-10:00\n16:10-16:30"); }
-            println!("📂 Abrindo editor de intervalos (Formato HH:MM-HH:MM)...");
-            
-            // Abre o Nano no terminal. Você salva com Ctrl+O e sai com Ctrl+X
+            if !Path::new(caminho).exists() { let _ = fs::write(caminho, ""); }
+            println!("📂 Abrindo editor de intervalos...");
             let _ = Command::new("nano").arg(caminho).status().expect("Falha ao abrir o editor.");
             println!("✅ Intervalos atualizados!");
         }
 
         Comandos::Interativo => {
-            let intervalos = carregar_intervalos();
+            let intervalos = carregar_intervalos(true); // Pergunta se o arquivo for novo
             let hj = Local::now().format("%d/%m/%Y").to_string();
             let dt = { let i = ler(&format!("📅 Data ({}): ", hj)); if i.is_empty() { hj } else { i } };
             let hr_i = ler("⏰ Início (HH:MM): ");
@@ -130,6 +137,7 @@ fn main() {
         }
 
         Comandos::Listar => {
+            let _ = carregar_intervalos(false); // Só carrega, sem perguntar
             let mut stmt = conn.prepare("SELECT id, data, horario_inicio, horario_fim, prof, min FROM atividades").unwrap();
             let rows = stmt.query_map([], |r| Ok((r.get::<_, i32>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, u32>(5)?))).unwrap();
             println!("\nID | DATA       | INÍCIO | FIM   | PROFESSOR     | MIN\n{}", "-".repeat(65));
@@ -143,7 +151,7 @@ fn main() {
         }
 
         Comandos::Atualizar { id } => {
-            let intervalos = carregar_intervalos();
+            let intervalos = carregar_intervalos(false);
             let res = conn.query_row("SELECT data, horario_inicio, prof, min, desc FROM atividades WHERE id = ?1", [id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, String>(4)?)));
             if let Ok((d, h, p, m, ds)) = res {
                 let dt = { let i = ler(&format!("Data ({}): ", d)); if i.is_empty() { d } else { i } };
