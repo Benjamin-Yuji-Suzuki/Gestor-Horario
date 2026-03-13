@@ -56,6 +56,7 @@ fn carregar_intervalos(proativo: bool) -> Vec<Intervalo> {
     lista
 }
 
+// Cálculo de fim agora lida com qualquer duração sem restrições
 fn calc_fim(ini_str: &str, dur: u32, intervalos: &[Intervalo]) -> String {
     let p: Vec<u32> = ini_str.split(':').filter_map(|v| v.parse().ok()).collect();
     if p.len() != 2 { return "00:00".into(); }
@@ -124,20 +125,22 @@ fn main() {
         }
 
         Comandos::Interativo => {
-            let intervalos = carregar_intervalos(true); // Pergunta se o arquivo for novo
+            let intervalos = carregar_intervalos(true);
             let hj = Local::now().format("%d/%m/%Y").to_string();
             let dt = { let i = ler(&format!("📅 Data ({}): ", hj)); if i.is_empty() { hj } else { i } };
             let hr_i = ler("⏰ Início (HH:MM): ");
-            let mins: u32 = ler("⏳ Minutos: ").parse().unwrap_or(0);
+            // Entrada dinâmica de minutos sem limites artificiais:
+            let mins: u32 = ler("⏳ Duração em Minutos: ").parse().unwrap_or(0);
+            
             let hr_f = calc_fim(&hr_i, mins, &intervalos);
             let prof = escolher_item_dinamico("Professor", "professores.txt", None);
             let desc = escolher_item_dinamico("Descrição", "descricoes.txt", None);
             let _ = conn.execute("INSERT INTO atividades (data, horario_inicio, horario_fim, prof, min, desc) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![dt, hr_i, hr_f, prof, mins, desc]);
-            println!("✅ Salvo! Término: {}", hr_f);
+            println!("✅ Salvo! Término calculado: {}", hr_f);
         }
 
         Comandos::Listar => {
-            let _ = carregar_intervalos(false); // Só carrega, sem perguntar
+            let _ = carregar_intervalos(false);
             let mut stmt = conn.prepare("SELECT id, data, horario_inicio, horario_fim, prof, min FROM atividades").unwrap();
             let rows = stmt.query_map([], |r| Ok((r.get::<_, i32>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, u32>(5)?))).unwrap();
             println!("\nID | DATA       | INÍCIO | FIM   | PROFESSOR     | MIN\n{}", "-".repeat(65));
@@ -161,7 +164,7 @@ fn main() {
                 let desc = escolher_item_dinamico("Descrição", "descricoes.txt", Some(&ds));
                 let hf = calc_fim(&hi, mins, &intervalos);
                 let _ = conn.execute("UPDATE atividades SET data=?1, horario_inicio=?2, horario_fim=?3, prof=?4, min=?5, desc=?6 WHERE id=?7", params![dt, hi, hf, pr, mins, desc, id]);
-                println!("✅ Registro atualizado!");
+                println!("✅ Registro #{} atualizado com sucesso!", id);
             }
         }
 
@@ -180,9 +183,9 @@ fn main() {
                 l += 1;
             }
             let path = UserDirs::new().and_then(|ud| ud.desktop_dir().map(|d| d.join("Relatorio_Monitoria.xlsx"))).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "Relatorio_Monitoria.xlsx".to_string());
-            let _ = wb.save(path); println!("✅ Excel Exportado!");
+            let _ = wb.save(path); println!("✅ Excel Exportado para a Área de Trabalho!");
         }
 
-        Comandos::Deletar { id } => { let _ = conn.execute("DELETE FROM atividades WHERE id = ?1", params![id]); println!("🗑️  Removido!"); }
+        Comandos::Deletar { id } => { let _ = conn.execute("DELETE FROM atividades WHERE id = ?1", params![id]); println!("🗑️  Registro removido."); }
     }
 }
