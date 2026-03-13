@@ -8,3 +8,4 @@ chrono = "0.4.44"
 clap = { version = "4.6.0", features = ["derive"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 rust_xlsxwriter = "0.94.0"
+directories = "5.0"
