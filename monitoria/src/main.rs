@@ -142,11 +142,23 @@ fn main() {
             let dt = { let i = ler(&format!("📅 Data ({}): ", hj)); if i.is_empty() { hj } else { i } };
             let hi = ler("⏰ Início (HH:MM): ");
             let mins: u32 = ler("⏳ Duração (Min): ").parse().unwrap_or(0);
-            let hf = calc_fim(&hi, mins, &intervalos);
+            
+            // NOVA LÓGICA: Ignorar intervalos (Útil para dias de prova)
+            let resp_ignorar = ler("🚧 Ignorar intervalos de descanso? (s/N): ").to_lowercase();
+            let ignorar_intervalos = resp_ignorar == "s";
+            let intervalos_calculo = if ignorar_intervalos { vec![] } else { intervalos };
+            
+            let hf = calc_fim(&hi, mins, &intervalos_calculo);
             let prof = escolher_item_dinamico("Professor", "professores.txt", None);
             let desc = escolher_item_dinamico("Descrição", "descricoes.txt", None);
+            
             let _ = conn.execute("INSERT INTO atividades (data, horario_inicio, horario_fim, prof, min, desc) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![dt, hi, hf, prof, mins, desc]);
-            println!("✅ Salvo! Término calculado: {}", hf);
+            
+            if ignorar_intervalos {
+                println!("✅ Salvo (Intervalos ignorados)! Término calculado: {}", hf);
+            } else {
+                println!("✅ Salvo! Término calculado: {}", hf);
+            }
         }
 
         Comandos::Listar => {
@@ -171,7 +183,6 @@ fn main() {
                 if let Ok(d) = NaiveDate::parse_from_str(&dt, "%d/%m/%Y") { 
                     if d.iso_week().week() == hj.iso_week().week() { s += mi; } 
                 }
-                // O uso do println! com os separadores " | " impede que os dados fiquem grudados
                 println!("{:<2} | {:<10} | {:<6} | {:<5} | {:<13} | {:<3} | {}", id, dt, hi, hf, pr, mi, ds);
             }
             println!("{}", "-".repeat(100));
@@ -179,8 +190,7 @@ fn main() {
         }
 
         Comandos::Atualizar { id } => {
-            let intervalos = carregar_intervalos(false);
-            let res = conn.query_row("SELECT data, horario_inicio, horario_fim, prof, desc FROM atividades WHERE id = ?1", [id], |r| Ok((
+            let res = conn.query_row("SELECT data, horario_inicio, horario_fim, prof, desc FROM atividades WHERE id = ?1", params![id], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, 
                 r.get::<_, String>(3)?, r.get::<_, String>(4)?
             )));
@@ -189,11 +199,21 @@ fn main() {
                 let dt = { let i = ler(&format!("📅 Data ({}): ", d)); if i.is_empty() { d } else { i } };
                 let hi = { let i = ler(&format!("⏰ Novo Início ({}): ", hi_at)); if i.is_empty() { hi_at } else { i } };
                 let hf = { let i = ler(&format!("⏰ Novo Fim ({}): ", hf_at)); if i.is_empty() { hf_at } else { i } };
-                let mins = calc_duracao(&hi, &hf, &intervalos);
+                
+                // NOVA LÓGICA: Apliquei aqui também caso queira recalcular duração sem pausas
+                let resp_ignorar = ler("🚧 Ignorar intervalos de descanso no cálculo? (s/N): ").to_lowercase();
+                let ignorar_intervalos = resp_ignorar == "s";
+                let intervalos_reais = carregar_intervalos(false);
+                let intervalos_calculo = if ignorar_intervalos { vec![] } else { intervalos_reais };
+
+                let mins = calc_duracao(&hi, &hf, &intervalos_calculo);
                 let prof = escolher_item_dinamico("Professor", "professores.txt", Some(&p));
                 let desc = escolher_item_dinamico("Descrição", "descricoes.txt", Some(&ds));
+                
                 let _ = conn.execute("UPDATE atividades SET data=?1, horario_inicio=?2, horario_fim=?3, prof=?4, min=?5, desc=?6 WHERE id=?7", params![dt, hi, hf, prof, mins, desc, id]);
                 println!("✅ Registro #{} atualizado! Duração recalculada: {} min.", id, mins);
+            } else {
+                println!("⚠️ Nenhum registro encontrado com o ID {}!", id);
             }
         }
 
@@ -216,9 +236,16 @@ fn main() {
                 l += 1;
             }
             let path = UserDirs::new().and_then(|ud| ud.desktop_dir().map(|d| d.join("Relatorio_Monitoria.xlsx"))).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "Relatorio_Monitoria.xlsx".to_string());
-            let _ = wb.save(path); println!("✅ Excel Exportado!");
+            let _ = wb.save(path); println!("✅ Excel Exportado para a Área de Trabalho!");
         }
 
-        Comandos::Deletar { id } => { let _ = conn.execute("DELETE FROM atividades (id) VALUES (?1)", params![id]); println!("🗑️ Removido!"); }
+        Comandos::Deletar { id } => { 
+            // CORREÇÃO APLICADA: Sintaxe DELETE ajustada
+            match conn.execute("DELETE FROM atividades WHERE id = ?1", params![id]) {
+                Ok(0) => println!("⚠️ Nenhum registro encontrado com o ID {}!", id),
+                Ok(_) => println!("🗑️ Registro #{} removido com sucesso!", id),
+                Err(e) => println!("❌ Erro ao deletar: {}", e),
+            }
+        }
     }
 }
