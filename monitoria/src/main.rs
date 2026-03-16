@@ -56,13 +56,16 @@ fn carregar_intervalos(proativo: bool) -> Vec<Intervalo> {
 fn calc_fim(ini_str: &str, dur: u32, intervalos: &[Intervalo]) -> String {
     let p: Vec<u32> = ini_str.split(':').filter_map(|v| v.parse().ok()).collect();
     if p.len() != 2 { return "00:00".into(); }
+    
     let mut tempo = p[0] * 60 + p[1];
     let mut rest = dur;
+    
     while rest > 0 {
-        tempo += 1;
+        tempo = (tempo + 1) % 1440; // Garante a virada de 24h para 00:00
         let em_intervalo = intervalos.iter().any(|i| tempo > i.inicio && tempo <= i.fim);
         if !em_intervalo { rest -= 1; }
     }
+    
     format!("{:02}:{:02}", tempo / 60, tempo % 60)
 }
 
@@ -71,11 +74,14 @@ fn calc_duracao(ini_str: &str, fim_str: &str, intervalos: &[Intervalo]) -> u32 {
         let p: Vec<u32> = s.split(':').filter_map(|v| v.parse().ok()).collect();
         if p.len() == 2 { Some(p[0] * 60 + p[1]) } else { None }
     };
+    
     if let (Some(ini), Some(fim)) = (parse(ini_str), parse(fim_str)) {
-        if fim <= ini { return 0; }
+        let fim_ajustado = if fim <= ini { fim + 1440 } else { fim }; // Ajusta caso passe da meia-noite
+        
         let mut minutos_uteis = 0;
-        for m in ini..fim {
-            let em_intervalo = intervalos.iter().any(|i| m >= i.inicio && m < i.fim);
+        for m in ini..fim_ajustado {
+            let m_mod = m % 1440; // Verifica intervalos corretamente durante a madrugada
+            let em_intervalo = intervalos.iter().any(|i| m_mod >= i.inicio && m_mod < i.fim);
             if !em_intervalo { minutos_uteis += 1; }
         }
         minutos_uteis
@@ -143,7 +149,6 @@ fn main() {
             let hi = ler("⏰ Início (HH:MM): ");
             let mins: u32 = ler("⏳ Duração (Min): ").parse().unwrap_or(0);
             
-            // NOVA LÓGICA: Ignorar intervalos (Útil para dias de prova)
             let resp_ignorar = ler("🚧 Ignorar intervalos de descanso? (s/N): ").to_lowercase();
             let ignorar_intervalos = resp_ignorar == "s";
             let intervalos_calculo = if ignorar_intervalos { vec![] } else { intervalos };
@@ -162,7 +167,13 @@ fn main() {
         }
 
         Comandos::Listar => {
-            let mut stmt = conn.prepare("SELECT id, data, horario_inicio, horario_fim, prof, min, desc FROM atividades").unwrap();
+            // Ordenação automática por data (YYYY-MM-DD) e horário de início
+            let mut stmt = conn.prepare(
+                "SELECT id, data, horario_inicio, horario_fim, prof, min, desc 
+                 FROM atividades 
+                 ORDER BY substr(data, 7, 4) || '-' || substr(data, 4, 2) || '-' || substr(data, 1, 2) ASC, horario_inicio ASC"
+            ).unwrap();
+            
             let rows = stmt.query_map([], |r| Ok((
                 r.get::<_, i32>(0)?,    // id
                 r.get::<_, String>(1)?, // data
@@ -200,7 +211,6 @@ fn main() {
                 let hi = { let i = ler(&format!("⏰ Novo Início ({}): ", hi_at)); if i.is_empty() { hi_at } else { i } };
                 let hf = { let i = ler(&format!("⏰ Novo Fim ({}): ", hf_at)); if i.is_empty() { hf_at } else { i } };
                 
-                // NOVA LÓGICA: Apliquei aqui também caso queira recalcular duração sem pausas
                 let resp_ignorar = ler("🚧 Ignorar intervalos de descanso no cálculo? (s/N): ").to_lowercase();
                 let ignorar_intervalos = resp_ignorar == "s";
                 let intervalos_reais = carregar_intervalos(false);
@@ -218,7 +228,13 @@ fn main() {
         }
 
         Comandos::Exportar => {
-            let mut stmt = conn.prepare("SELECT data, horario_inicio, horario_fim, prof, min, desc FROM atividades").unwrap();
+            // Ordenação automática por data (YYYY-MM-DD) e horário de início também no Excel
+            let mut stmt = conn.prepare(
+                "SELECT data, horario_inicio, horario_fim, prof, min, desc 
+                 FROM atividades 
+                 ORDER BY substr(data, 7, 4) || '-' || substr(data, 4, 2) || '-' || substr(data, 1, 2) ASC, horario_inicio ASC"
+            ).unwrap();
+            
             let regs: Vec<_> = stmt.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, 
                 r.get::<_, String>(3)?, r.get::<_, u32>(4)?, r.get::<_, String>(5)?
@@ -240,7 +256,6 @@ fn main() {
         }
 
         Comandos::Deletar { id } => { 
-            // CORREÇÃO APLICADA: Sintaxe DELETE ajustada
             match conn.execute("DELETE FROM atividades WHERE id = ?1", params![id]) {
                 Ok(0) => println!("⚠️ Nenhum registro encontrado com o ID {}!", id),
                 Ok(_) => println!("🗑️ Registro #{} removido com sucesso!", id),
